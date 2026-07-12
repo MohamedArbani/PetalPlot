@@ -1,6 +1,6 @@
-# [Project name]
+# PetalPlot
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+A garden-themed logic deduction puzzle game (mobile) — place flowers on a grid so each colored patch, row, and column has exactly one, and no two flowers touch.
 
 ## Run & Operate
 

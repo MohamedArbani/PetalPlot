@@ -1,0 +1,40 @@
+Act as an expert mobile game developer specializing in cross-platform frameworks (React Native/Expo with TypeScript). Help me implement a logic deduction puzzle game called "PetalPlot", inspired by grid-based constraint games like Star Battle and Meowdoku. 
+
+The core game loop requires players to place a specific number of flowers on a grid while satisfying strict color-zone, row/column, and adjacency constraints.
+
+Please provide the implementation architecture, state structure, and key components based on the specifications below.
+
+### 1. Game Rules & Logic Constraints
+- Grid Size: $5 \times 5$ for base levels. Each cell belongs to a specific colored "zone" (defined by an ID or color hex).
+- Flower Constraints: The player must place exactly N flowers (e.g., 5 flowers on a 5x5 grid).
+- Rule 1 (Zone): Exactly 1 flower per colored zone.
+- Rule 2 (Line): Exactly 1 flower per row and 1 flower per column.
+- Rule 3 (Adjacency): Flowers cannot touch each other, even diagonally (8-way adjacency check).
+
+### 2. Grid Interaction States
+Each cell in the grid can have one of three states:
+- `EMPTY`: Default state.
+- `BLOCKED` (Represented by an 'X' or garden stake): Visual aid for the player to mark cells where a flower cannot go.
+- `FLOWER`: A placed flower asset/icon.
+- Interaction Cycle: Tapping an empty cell cycles its state: EMPTY -> BLOCKED -> FLOWER -> EMPTY.
+
+### 3. Key Engine & Validation Logic
+Implement a `validateGrid(gridState, levelConfig)` function that checks the board state whenever a flower is added or removed. It must:
+- Extract all coordinates containing a `FLOWER`.
+- Verify row and column counts do not exceed 1.
+- Verify that no two flowers share adjacent coordinates (dx <= 1 && dy <= 1).
+- Verify that no two flowers share the same zone ID.
+- Provide real-time feedback: highlight violating flowers in a subtle translucent red state if a rule is broken.
+- Trigger a win condition when all N flowers are placed correctly without rule violations.
+
+### 4. Component Structure
+Please structure the application code clearly:
+- `GameScreen`: Holds the overall level state, active flower counter (e.g., "Flowers 3/5"), lives/hearts counter, and rule indicators.
+- `RuleHeader`: A top bar showing the 3 rules textually/iconographically.
+- `PuzzleGrid`: Renders the board. Each cell should render its assigned background color zone, with distinct borders dividing different zones cleanly.
+- `GridCell`: Individual touchable components handling the cycle taps, displaying an 'X' for BLOCKED, or a flower icon/animation for FLOWER.
+
+### 5. Sample Level Mock Data
+Provide a hardcoded $5 \times 5$ level matrix config to test the system. The config should map out a grid where cells are assigned zone IDs (0 through 4) ensuring that a valid solution exists matching all rules.
+
+Deliver clean, production-ready, type-safe code using React Native hooks (`useState`, `useMemo`) for performance. Keep layout styling clean and minimalist using Tailwind/NativeWind or StyleSheet.
