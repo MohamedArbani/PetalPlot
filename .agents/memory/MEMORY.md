@@ -1,0 +1,1 @@
+- [FFmpeg alpha video conversion](ffmpeg-alpha-video.md) — use colorkey not chromakey to key out solid-color video backgrounds, or desaturated foreground content gets wrongly keyed transparent.

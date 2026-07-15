@@ -8,14 +8,16 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import colors, { zoneColors } from '@/constants/colors';
+import colors from '@/constants/colors';
 import { CellState } from '@/lib/petalplot/types';
 
 interface GridCellProps {
   state: CellState;
   zoneId: number;
+  zoneColors: string[];
   size: number;
   isViolating: boolean;
+  isHinted?: boolean;
   isLocked: boolean;
   borderTop: boolean;
   borderLeft: boolean;
@@ -31,8 +33,10 @@ const HAIRLINE_WIDTH = StyleSheet.hairlineWidth;
 export function GridCell({
   state,
   zoneId,
+  zoneColors,
   size,
   isViolating,
+  isHinted,
   isLocked,
   borderTop,
   borderLeft,
@@ -97,6 +101,9 @@ export function GridCell({
         {isViolating && (
           <View style={[StyleSheet.absoluteFill, styles.violationOverlay]} />
         )}
+        {isHinted && !isViolating && (
+          <View style={[StyleSheet.absoluteFill, styles.hintOverlay]} />
+        )}
         {state === 'BLOCKED' && (
           <Ionicons
             name="close"
@@ -129,5 +136,8 @@ const styles = StyleSheet.create({
   },
   violationOverlay: {
     backgroundColor: 'rgba(214, 91, 91, 0.28)',
+  },
+  hintOverlay: {
+    backgroundColor: 'rgba(243, 175, 41, 0.35)',
   },
 });

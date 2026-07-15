@@ -19,7 +19,7 @@ function RuleChip({ icon, label }: RuleChipProps) {
     >
       <Ionicons name={icon} size={15} color={colors.primary} />
       <Text
-        style={[styles.chipLabel, { color: colors.secondaryForeground }]}
+        style={[styles.chipLabel, { color: colors.cardForeground }]}
         numberOfLines={1}
       >
         {label}

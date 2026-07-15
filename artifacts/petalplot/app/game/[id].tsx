@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Image,
   Platform,
   Pressable,
   StyleSheet,
@@ -9,7 +10,7 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import Animated, {
   useAnimatedStyle,
@@ -23,11 +24,26 @@ import { useColors } from '@/hooks/useColors';
 import { getLevelById, LEVELS } from '@/lib/petalplot/levels';
 import { CellState } from '@/lib/petalplot/types';
 import { createEmptyGrid, cycleCellState, validateGrid } from '@/lib/petalplot/gameLogic';
-import { useGameProgress } from '@/context/GameProgressContext';
+import { solveLevel } from '@/lib/petalplot/solver';
+import { getThemeById } from '@/lib/petalplot/themes';
+import { usePlayer } from '@/context/PlayerContext';
 import { PuzzleGrid } from '@/components/PuzzleGrid';
 import { RuleHeader } from '@/components/RuleHeader';
+import { Mascot } from '@/components/Mascot';
+import { Dialog } from '@/components/Dialog';
+import { StarRating } from '@/components/HUD';
+
+const HeartFilledIcon = require('@/assets/icons/png/HeartFilled.png');
+const HeartBaseIcon = require('@/assets/icons/png/HeartBase.png');
 
 const MAX_HEARTS = 3;
+
+function formatTime(ms: number): string {
+  const totalSeconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+}
 
 export default function GameScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -37,40 +53,61 @@ export default function GameScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
-  const { completeLevel, isLevelCompleted } = useGameProgress();
+  const player = usePlayer();
+  const theme = getThemeById(player.equippedThemeId);
 
-  const [grid, setGrid] = useState<CellState[][]>(() =>
-    createEmptyGrid(level?.n ?? 5),
-  );
+  const [grid, setGrid] = useState<CellState[][]>(() => createEmptyGrid(level?.n ?? 5));
   const [hearts, setHearts] = useState(MAX_HEARTS);
   const [hasWon, setHasWon] = useState(false);
-  const previousViolationsRef = useRef<Set<string>>(new Set());
+  const [hasLost, setHasLost] = useState(false);
+  const [confirmRestartVisible, setConfirmRestartVisible] = useState(false);
+  const [confirmHintVisible, setConfirmHintVisible] = useState(false);
+  const [hintedCell, setHintedCell] = useState<{ row: number; col: number } | null>(null);
+  const [elapsedMs, setElapsedMs] = useState(0);
+  const [mistakesMade, setMistakesMade] = useState(false);
+  const startTimeRef = useRef(Date.now());
 
   useEffect(() => {
     if (!level) return;
     setGrid(createEmptyGrid(level.n));
     setHearts(MAX_HEARTS);
     setHasWon(false);
-    previousViolationsRef.current = new Set();
+    setHasLost(false);
+    setHintedCell(null);
+    setElapsedMs(0);
+    setMistakesMade(false);
+    startTimeRef.current = Date.now();
   }, [level?.id]);
+
+  useEffect(() => {
+    if (hasWon || hasLost) return;
+    const interval = setInterval(() => {
+      setElapsedMs(Date.now() - startTimeRef.current);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [hasWon, hasLost, level?.id]);
 
   const validation = useMemo(() => {
     if (!level) return null;
     return validateGrid(grid, level);
   }, [grid, level]);
 
+  const stars = mistakesMade ? (hearts >= 2 ? 2 : 1) : 3;
+
   const winBannerScale = useSharedValue(0);
+  const loseBannerScale = useSharedValue(0);
   const heartShake = useSharedValue(0);
 
   useEffect(() => {
     if (validation?.isSolved && !hasWon) {
       setHasWon(true);
-      completeLevel(levelId);
+      player.recordLevelResult(levelId, {
+        stars,
+        timeMs: elapsedMs,
+        isPerfect: !mistakesMade,
+      });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      winBannerScale.value = withDelay(
-        150,
-        withSpring(1, { damping: 11, stiffness: 140 }),
-      );
+      winBannerScale.value = withDelay(150, withSpring(1, { damping: 11, stiffness: 140 }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [validation?.isSolved]);
@@ -79,14 +116,25 @@ export default function GameScreen() {
     transform: [{ scale: winBannerScale.value }],
     opacity: winBannerScale.value,
   }));
-
+  const loseBannerStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: loseBannerScale.value }],
+    opacity: loseBannerScale.value,
+  }));
   const heartShakeStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: heartShake.value }],
   }));
 
+  const triggerLoss = useCallback(() => {
+    setHasLost(true);
+    player.spendLife();
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    loseBannerScale.value = withDelay(150, withSpring(1, { damping: 11, stiffness: 140 }));
+  }, [player]);
+
   const handleCellPress = useCallback(
     (row: number, col: number) => {
-      if (!level || hasWon) return;
+      if (!level || hasWon || hasLost) return;
+      setHintedCell(null);
 
       setGrid((prevGrid) => {
         const current = prevGrid[row]?.[col] ?? 'EMPTY';
@@ -99,6 +147,7 @@ export default function GameScreen() {
           const key = `${row},${col}`;
           if (result.violatingCells.has(key)) {
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+            setMistakesMade(true);
             setHearts((h) => {
               const remaining = Math.max(0, h - 1);
               if (remaining === 0) {
@@ -108,15 +157,7 @@ export default function GameScreen() {
                   withTiming(-4, { duration: 60 }),
                   withTiming(0, { duration: 60 }),
                 );
-                // Gently clear flowers (keep blocked marks) and refill hearts.
-                setTimeout(() => {
-                  setGrid((g) =>
-                    g.map((r) =>
-                      r.map((c) => (c === 'FLOWER' ? 'BLOCKED' : c)),
-                    ),
-                  );
-                  setHearts(MAX_HEARTS);
-                }, 260);
+                setTimeout(() => triggerLoss(), 260);
               }
               return remaining;
             });
@@ -130,23 +171,45 @@ export default function GameScreen() {
         return nextGrid;
       });
     },
-    [level, hasWon],
+    [level, hasWon, hasLost, triggerLoss],
   );
 
-  const handleReset = useCallback(() => {
+  const resetBoard = useCallback(() => {
     if (!level) return;
-    Haptics.selectionAsync();
     setGrid(createEmptyGrid(level.n));
     setHearts(MAX_HEARTS);
     setHasWon(false);
+    setHasLost(false);
+    setHintedCell(null);
+    setMistakesMade(false);
+    setElapsedMs(0);
+    startTimeRef.current = Date.now();
     winBannerScale.value = 0;
+    loseBannerScale.value = 0;
   }, [level]);
+
+  const handleResetPress = useCallback(() => {
+    Haptics.selectionAsync();
+    setConfirmRestartVisible(true);
+  }, []);
+
+  const handleUseHint = useCallback(() => {
+    if (!level) return;
+    const solution = solveLevel(level);
+    if (!solution) return;
+    const unrevealed = solution.filter(
+      (cell) => grid[cell.row]?.[cell.col] !== 'FLOWER',
+    );
+    const target = unrevealed[Math.floor(Math.random() * unrevealed.length)];
+    if (!target) return;
+    if (!player.spendHint()) return;
+    setHintedCell(target);
+    Haptics.selectionAsync();
+  }, [level, grid, player]);
 
   if (!level || !validation) {
     return (
-      <SafeAreaView
-        style={[styles.container, { backgroundColor: colors.background }]}
-      >
+      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
         <Text style={{ color: colors.foreground }}>Level not found.</Text>
       </SafeAreaView>
     );
@@ -155,71 +218,57 @@ export default function GameScreen() {
   const boardSize = Math.min(width - 40, 440);
   const nextLevel = LEVELS.find((l) => l.id === level.id + 1);
   const webTopInset = Platform.OS === 'web' ? 67 : insets.top;
+  const canRetry = player.lives > 0;
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <View
         style={[
           styles.header,
-          {
-            paddingTop: webTopInset + 12,
-            borderBottomColor: colors.border,
-            backgroundColor: colors.background,
-          },
+          { paddingTop: webTopInset + 12, borderBottomColor: colors.border, backgroundColor: colors.background },
         ]}
       >
-        <Pressable
-          testID="back-button"
-          onPress={() => router.back()}
-          style={styles.iconButton}
-          hitSlop={10}
-        >
+        <Pressable testID="back-button" onPress={() => router.back()} style={styles.iconButton} hitSlop={10}>
           <Ionicons name="chevron-back" size={24} color={colors.foreground} />
         </Pressable>
 
         <View style={styles.headerCenter}>
-          <Text
-            style={[styles.levelName, { color: colors.foreground }]}
-            numberOfLines={1}
-          >
+          <Text style={[styles.levelName, { color: colors.foreground }]} numberOfLines={1}>
             {level.name}
           </Text>
-          <View style={styles.flowerCounterRow}>
-            <MaterialCommunityIcons
-              name="flower"
-              size={13}
-              color={colors.accent}
-            />
-            <Text
-              style={[styles.flowerCounter, { color: colors.mutedForeground }]}
-            >
-              {validation.flowerCount} / {level.n}
-            </Text>
-          </View>
+          <Text style={[styles.timer, { color: colors.mutedForeground }]}>
+            {formatTime(elapsedMs)} · {validation.flowerCount}/{level.n}
+          </Text>
         </View>
 
-        <Pressable
-          testID="reset-button"
-          onPress={handleReset}
-          style={styles.iconButton}
-          hitSlop={10}
-        >
-          <Ionicons name="refresh" size={22} color={colors.foreground} />
-        </Pressable>
+        <View style={styles.headerActions}>
+          <Pressable
+            testID="hint-button"
+            onPress={() => setConfirmHintVisible(true)}
+            style={styles.iconButton}
+            hitSlop={10}
+          >
+            <Ionicons name="bulb-outline" size={22} color={colors.coinGold} />
+          </Pressable>
+          <Pressable testID="reset-button" onPress={handleResetPress} style={styles.iconButton} hitSlop={10}>
+            <Ionicons name="refresh" size={22} color={colors.foreground} />
+          </Pressable>
+        </View>
       </View>
 
       <View style={styles.heartsRow}>
         <Animated.View style={[styles.hearts, heartShakeStyle]}>
           {Array.from({ length: MAX_HEARTS }).map((_, i) => (
-            <Ionicons
+            <Image
               key={i}
-              name={i < hearts ? 'heart' : 'heart-outline'}
-              size={18}
-              color={i < hearts ? colors.heartFilled : colors.heartEmpty}
+              source={i < hearts ? HeartFilledIcon : HeartBaseIcon}
               style={styles.heartIcon}
             />
           ))}
         </Animated.View>
+        <Text style={[styles.hintCount, { color: colors.mutedForeground }]}>
+          {player.hints} hints left
+        </Text>
       </View>
 
       <View style={styles.ruleHeaderWrap}>
@@ -230,19 +279,21 @@ export default function GameScreen() {
         <PuzzleGrid
           n={level.n}
           zones={level.zones}
+          zoneColors={theme.colors}
           grid={grid}
           violatingCells={validation.violatingCells}
+          hintedCell={hintedCell}
           boardSize={boardSize}
-          isLocked={hasWon}
+          isLocked={hasWon || hasLost}
           onCellPress={handleCellPress}
         />
       </View>
 
       {hasWon && (
-        <View style={styles.winOverlay} pointerEvents="box-none">
+        <View style={styles.overlay} pointerEvents="box-none">
           <Animated.View
             style={[
-              styles.winCard,
+              styles.resultCard,
               winBannerStyle,
               {
                 backgroundColor: colors.card,
@@ -251,64 +302,131 @@ export default function GameScreen() {
               },
             ]}
           >
-            <MaterialCommunityIcons
-              name="flower-tulip"
-              size={34}
-              color={colors.primary}
-            />
-            <Text style={[styles.winTitle, { color: colors.foreground }]}>
-              Bed cleared!
+            <Mascot variant="success" size={110} />
+            <Text style={[styles.resultTitle, { color: colors.cardForeground }]}>
+              Bloom Complete!
             </Text>
-            <Text style={[styles.winSubtitle, { color: colors.mutedForeground }]}>
-              Every flower found its perfect spot.
+            <Text style={[styles.resultSubtitle, { color: colors.mutedOnCard }]}>
+              Solved in {formatTime(elapsedMs)}
             </Text>
-            <View style={styles.winActions}>
+            <StarRating stars={stars} />
+            <View style={styles.resultActions}>
               <Pressable
                 testID="back-to-levels-button"
                 onPress={() => router.back()}
-                style={[
-                  styles.winButton,
-                  styles.winButtonSecondary,
-                  { borderColor: colors.border },
-                ]}
+                style={[styles.resultButton, styles.resultButtonSecondary, { borderColor: colors.cardBorder }]}
               >
-                <Text
-                  style={[
-                    styles.winButtonLabel,
-                    { color: colors.secondaryForeground },
-                  ]}
-                >
-                  Levels
-                </Text>
+                <Text style={[styles.resultButtonLabel, { color: colors.cardForeground }]}>Levels</Text>
               </Pressable>
               {nextLevel && (
                 <Pressable
                   testID="next-level-button"
                   onPress={() => router.replace(`/game/${nextLevel.id}`)}
-                  style={[
-                    styles.winButton,
-                    { backgroundColor: colors.primary },
-                  ]}
+                  style={[styles.resultButton, { backgroundColor: colors.primary }]}
                 >
-                  <Text
-                    style={[
-                      styles.winButtonLabel,
-                      { color: colors.primaryForeground },
-                    ]}
-                  >
-                    Next bed
-                  </Text>
-                  <Ionicons
-                    name="arrow-forward"
-                    size={16}
-                    color={colors.primaryForeground}
-                  />
+                  <Text style={[styles.resultButtonLabel, { color: '#FFFFFF' }]}>Next bed</Text>
+                  <Ionicons name="arrow-forward" size={16} color="#FFFFFF" />
                 </Pressable>
               )}
             </View>
           </Animated.View>
         </View>
       )}
+
+      {hasLost && (
+        <View style={styles.overlay} pointerEvents="box-none">
+          <Animated.View
+            style={[
+              styles.resultCard,
+              loseBannerStyle,
+              {
+                backgroundColor: colors.card,
+                borderColor: colors.destructive,
+                marginBottom: Platform.OS === 'web' ? 34 : insets.bottom + 16,
+              },
+            ]}
+          >
+            <Mascot variant="sad" size={110} />
+            <Text style={[styles.resultTitle, { color: colors.cardForeground }]}>
+              Out of Lives!
+            </Text>
+            <Text style={[styles.resultSubtitle, { color: colors.mutedOnCard }]}>
+              {canRetry ? "Don't give up, try again." : 'Come back once your lives refill.'}
+            </Text>
+            <View style={styles.resultActions}>
+              <Pressable
+                testID="back-to-levels-from-lose-button"
+                onPress={() => router.back()}
+                style={[styles.resultButton, styles.resultButtonSecondary, { borderColor: colors.cardBorder }]}
+              >
+                <Text style={[styles.resultButtonLabel, { color: colors.cardForeground }]}>Back to Levels</Text>
+              </Pressable>
+              <Pressable
+                testID="try-again-button"
+                disabled={!canRetry}
+                onPress={resetBoard}
+                style={[
+                  styles.resultButton,
+                  { backgroundColor: canRetry ? colors.destructive : colors.muted },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.resultButtonLabel,
+                    { color: canRetry ? '#FFFFFF' : colors.mutedOnCard },
+                  ]}
+                >
+                  Try Again
+                </Text>
+              </Pressable>
+            </View>
+          </Animated.View>
+        </View>
+      )}
+
+      <Dialog
+        visible={confirmRestartVisible}
+        title="Restart this level?"
+        description="Your current progress on this bed will be cleared."
+        mascotVariant="thinking"
+        actions={[
+          { label: 'Cancel', onPress: () => setConfirmRestartVisible(false), variant: 'secondary' },
+          {
+            label: 'Restart',
+            onPress: () => {
+              setConfirmRestartVisible(false);
+              resetBoard();
+            },
+          },
+        ]}
+        onRequestClose={() => setConfirmRestartVisible(false)}
+      />
+
+      <Dialog
+        visible={confirmHintVisible}
+        title="Use a hint?"
+        description={
+          player.hints > 0
+            ? 'Reveals a possible flower cell.'
+            : 'You have no hints left. Visit the Store to get more.'
+        }
+        mascotVariant="thinking"
+        actions={[
+          { label: 'Cancel', onPress: () => setConfirmHintVisible(false), variant: 'secondary' },
+          {
+            label: player.hints > 0 ? 'Use 1 Hint' : 'Go to Store',
+            onPress: () => {
+              setConfirmHintVisible(false);
+              if (player.hints > 0) {
+                handleUseHint();
+              } else {
+                router.push('/store');
+              }
+            },
+          },
+        ]}
+        onRequestClose={() => setConfirmHintVisible(false)}
+      />
     </View>
   );
 }
@@ -320,7 +438,7 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
+    paddingHorizontal: 12,
     paddingBottom: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
@@ -329,6 +447,9 @@ const styles = StyleSheet.create({
     height: 36,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  headerActions: {
+    flexDirection: 'row',
   },
   headerCenter: {
     flex: 1,
@@ -339,24 +460,26 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontFamily: 'Inter_600SemiBold',
   },
-  flowerCounterRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  flowerCounter: {
+  timer: {
     fontSize: 12,
     fontFamily: 'Inter_500Medium',
   },
   heartsRow: {
     alignItems: 'center',
     paddingTop: 10,
+    gap: 4,
   },
   hearts: {
     flexDirection: 'row',
   },
   heartIcon: {
+    width: 20,
+    height: 20,
     marginHorizontal: 2,
+  },
+  hintCount: {
+    fontSize: 11,
+    fontFamily: 'Inter_500Medium',
   },
   ruleHeaderWrap: {
     paddingTop: 12,
@@ -368,7 +491,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 20,
   },
-  winOverlay: {
+  overlay: {
     position: 'absolute',
     left: 0,
     right: 0,
@@ -377,7 +500,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'flex-end',
   },
-  winCard: {
+  resultCard: {
     width: '86%',
     borderRadius: 24,
     borderWidth: 1.5,
@@ -391,34 +514,35 @@ const styles = StyleSheet.create({
     shadowRadius: 20,
     elevation: 8,
   },
-  winTitle: {
+  resultTitle: {
     fontSize: 19,
     fontFamily: 'Inter_700Bold',
-    marginTop: 6,
+    marginTop: 4,
   },
-  winSubtitle: {
+  resultSubtitle: {
     fontSize: 13,
     fontFamily: 'Inter_400Regular',
     textAlign: 'center',
-    marginBottom: 12,
+    marginBottom: 10,
   },
-  winActions: {
+  resultActions: {
     flexDirection: 'row',
     gap: 10,
+    marginTop: 14,
   },
-  winButton: {
+  resultButton: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingHorizontal: 18,
+    paddingHorizontal: 16,
     paddingVertical: 11,
     borderRadius: 14,
   },
-  winButtonSecondary: {
+  resultButtonSecondary: {
     borderWidth: 1.5,
   },
-  winButtonLabel: {
-    fontSize: 14,
+  resultButtonLabel: {
+    fontSize: 13,
     fontFamily: 'Inter_600SemiBold',
   },
 });

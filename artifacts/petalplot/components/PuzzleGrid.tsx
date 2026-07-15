@@ -7,8 +7,10 @@ import { GridCell } from './GridCell';
 interface PuzzleGridProps {
   n: number;
   zones: number[][];
+  zoneColors: string[];
   grid: CellState[][];
   violatingCells: Set<string>;
+  hintedCell?: { row: number; col: number } | null;
   boardSize: number;
   isLocked: boolean;
   onCellPress: (row: number, col: number) => void;
@@ -17,8 +19,10 @@ interface PuzzleGridProps {
 export function PuzzleGrid({
   n,
   zones,
+  zoneColors,
   grid,
   violatingCells,
+  hintedCell,
   boardSize,
   isLocked,
   onCellPress,
@@ -47,9 +51,11 @@ export function PuzzleGrid({
                 testID={`grid-cell-${rowIndex}-${colIndex}`}
                 state={cellState}
                 zoneId={zoneId}
+                zoneColors={zoneColors}
                 size={cellSize}
                 isLocked={isLocked}
                 isViolating={violatingCells.has(key)}
+                isHinted={hintedCell?.row === rowIndex && hintedCell?.col === colIndex}
                 borderTop={
                   rowIndex === 0 || zones[rowIndex - 1]?.[colIndex] !== zoneId
                 }
